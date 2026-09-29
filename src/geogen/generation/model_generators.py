@@ -5,12 +5,13 @@ import csv
 import importlib.resources as resources
 import os
 from typing import List
+import inspect
 
 import numpy as np
 from pydtmc import MarkovChain
 
 import geogen.generation.categorical_events as events
-from geogen.generation.geowords import BOUNDS_X, BOUNDS_Y, BOUNDS_Z
+from geogen.generation.geowords import BOUNDS_X, BOUNDS_Y, BOUNDS_Z, GeoWord
 from geogen.model.geomodel import GeoModel, GeoProcess
 
 
@@ -307,3 +308,178 @@ class MarkovMatrixParser:
         # Create the MarkovChain library object
         mc = MarkovChain(self.transition_matrix, self.markov_states)
         return mc
+
+
+class BlockedGeostoryGenerator(_GeostoryGenerator):
+    """
+    A class that generates geological models from a sequence of fixed-sequence steps and Markov-process steps called blocks. Each block is a combination of GeoWords, Events or GeoProcesses.
+    It is designed to exploit configurability built into GeoWord, GeoProcess and Event specifications in the second version of the geogen library.
+
+    Inherits from:
+    --------------
+    _GeostoryGenerator
+
+    Notes
+    ----------
+    This class has a strong dependency on the categorical_events module and the geowords module.
+    Any changes to categorical_events object names may require changes to this class.
+
+    Parameters
+    ----------
+    registry : 
+    model_bounds : tuple, optional
+        The bounds of the model in the form ((xmin, xmax), (ymin, ymax), (zmin, zmax)), by default ((-3840, 3840), (-3840, 3840), (-1920, 1920))
+    model_resolution : tuple, optional
+        The resolution of the model in the form (nx, ny, nz), by default (256, 256, 128)
+    config : str, optional
+        The path to a file containing the configuration information for the blocked history, including a labeled Markov transition matrix for each Markov block
+    """
+
+    def __init__(self,config,registry,**kwargs):
+        """
+        Initialize the blocked generator class
+        """
+        model_bounds = kwargs.pop(
+            "model_bounds",
+            config.model.bounds,
+        )
+        model_resolution = kwargs.pop(
+            "model_resolution",
+            config.model.resolution,
+        )
+        super().__init__(
+            model_bounds=model_bounds,
+            model_resolution=model_resolution,
+            config=config,
+            **kwargs,
+        )
+        self.registry = registry
+        self.rng = np.random.default_rng(config.seed)
+
+    def _next_seed(self) -> int:
+        """
+        create deterministic childs seeds within the prespecified bounds
+        """
+        return int(
+            self.rng.integers(0, 2**32 - 1)
+        )
+
+
+    def _instantiate(self, component_config):
+        """
+        method to instantiate components based on the information stored in the block configuration tool
+        """
+        definition = self.registry.get(
+            component_config.component
+        )
+        parameters = dict(component_config.parameters)
+
+        try:
+            signature = inspect.signature(definition.cls)
+        except (TypeError, ValueError):
+            signature = None
+
+        if (
+            signature is not None
+            and "seed" in signature.parameters
+            and "seed" not in parameters
+        ):
+            parameters["seed"] = self._next_seed()
+
+        instance = definition.cls(**parameters)
+
+        if isinstance(instance, GeoWord):
+            result = instance.generate()
+
+        elif isinstance(instance, GeoProcess):
+            result = instance
+
+        else:
+            raise TypeError(
+                f"{definition.label} has unsupported type "
+                f"{type(instance).__name__}"
+            )
+
+        if not isinstance(result, GeoProcess):
+            raise TypeError(
+                f"{definition.label} generated unsupported type "
+                f"{type(result).__name__}"
+            )
+
+        return result
+
+    def _generate_fixed_block(self, block):
+        return [
+            self._instantiate(component)
+            for component in block.components
+        ]
+
+    def _generate_markov_block(self, block):
+        components = {
+            component.id: component
+            for component in block.components
+        }
+
+        history = []
+        state = "Start"
+
+        for _ in range(block.max_steps):
+            transition_row = block.transitions[state]
+            destination_states = list(transition_row)
+            probabilities = np.asarray(
+                [
+                    transition_row[destination]
+                    for destination in destination_states
+                ],
+                dtype=float,
+            )
+
+            state = str(
+                self.rng.choice(
+                    destination_states,
+                    p=probabilities,
+                )
+            )
+
+            if state == "End":
+                return history
+
+            history.append(
+                self._instantiate(components[state])
+            )
+
+        raise RuntimeError(
+            f"Markov block {block.name!r} did not reach End "
+            f"within {block.max_steps} steps"
+        )
+
+    def generate_history(self):
+        history = []
+
+        for block in self.config.blocks:
+            if block.mode == "fixed":
+                block_history = self._generate_fixed_block(block)
+            else:
+                block_history = self._generate_markov_block(block)
+
+            history.extend(block_history)
+
+        return history
+
+    def generate_models(self, n_samples: int=1,) -> list[GeoModel]:
+        """
+        Generate one or more models from independently sampled histories
+        """
+        if n_samples < 1:
+            raise ValueError("n_samples must be at least 1")
+        return [
+            self._history_to_model(
+                self.generate_history()
+            )
+            for _ in range(n_samples)
+        ]
+
+    def generate_model(self):
+        return self._history_to_model(
+            self.generate_history()
+        )

@@ -29,7 +29,18 @@ __title__ = "GeoGen"
 import geogen.model as model
 # TODO: Update these imports into a cohesive API
 # Note, some very specific imports should be used to avoid importing the entire library
-from geogen.dataset import GeoData3DStreamingDataset as StreamingDataset
+# from geogen.dataset import GeoData3DStreamingDataset as StreamingDataset
 
 # This controls the import behaviour when using `from geogen import *`
 __all__ = ["GeoData3DStreamingDataset", "model", "plot", "gen"]
+
+# switched out old import with lazy loading to allow for torch-independent deployment
+def __getattr__(name: str):
+    if name == "GeoData3DStreamingDataset":
+        from geogen.dataset import GeoData3DStreamingDataset
+
+        return GeoData3DStreamingDataset
+
+    raise AttributeError(
+        f"Module {__name__!r} has no attribute {name!r}"
+    )

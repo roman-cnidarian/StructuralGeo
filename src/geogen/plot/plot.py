@@ -597,3 +597,57 @@ def _convert_3darray_to_voxel_grid(
     grid["values"] = model_data.ravel(order="F")
     
     return grid
+
+
+# methods for use in the studio app
+
+def panel_nsliceview(
+    model: GeoModel,
+    plotter: pv.Plotter | None = None,
+    n: int = 5,
+    axis: str = "x",
+    threshold: float = -0.5,
+) -> pv.Plotter:
+    """
+    Display multiple model slices in a Panel-compatible PyVista plotter.
+
+    Unlike geogen.plot.nsliceview(), this function adds every slice as an
+    individual mesh. This avoids the CompositePolyDataMapper used when a
+    PyVista MultiBlock is added directly, which Panel's browser-based VTK
+    renderer does not reliably display.
+    """
+    if plotter is None:
+        plotter = pv.Plotter(off_screen=True)
+
+    plotter, mesh, plot_config = setup_plot(
+        model=model,
+        plotter=plotter,
+        threshold=threshold,
+    )
+
+    if mesh is None:
+        return plotter
+
+    slices = mesh.slice_along_axis(
+        n=n,
+        axis=axis,
+    )
+
+    scalar_bar_added = False
+
+    for slice_mesh in slices:
+        if slice_mesh is None or slice_mesh.n_points == 0:
+            continue
+
+        plotter.add_mesh(
+            slice_mesh,
+            scalars="values",
+            show_scalar_bar=not scalar_bar_added,
+            **plot_config,
+        )
+
+        scalar_bar_added = True
+
+    plotter.add_axes(line_width=5)
+
+    return plotter
