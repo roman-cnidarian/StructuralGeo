@@ -7,6 +7,7 @@ from typing import Optional
 import numpy as np
 import pyvista as pv
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_hex
 
 from geogen.model import GeoModel
 from geogen.generation import (
@@ -58,6 +59,7 @@ def plot_config_categorical(geowords=True):
                 "cmap": cmap_discrete,
                 "n_colors": n_colors,
                 "annotations": annotations,
+                "show_scalar_bar":True
             }
         )
 
@@ -73,6 +75,50 @@ def plot_config_categorical(geowords=True):
 
     return plot_config
 
+def categorical_legend_entries() -> list[dict]:
+    """Return grouped labels and colors used by categorical plots."""
+
+    config = plot_config_categorical(geowords=True)
+
+    cmap = config["cmap"]
+    clim_min, clim_max = config["clim"]
+    n_colors = config["n_colors"]
+
+    groups = [
+        ("Air", [-1]),
+        ("Basement", [BED_ROCK_VAL]),
+        ("Sedimentary", SEDIMENT_VALS),
+        ("Planar Dikes", DIKE_VALS),
+        ("Magma Intrusion", INTRUSION_VALS),
+        ("Minerals", BLOB_VALS),
+    ]
+
+    def color_for_value(value: float) -> str:
+        # Reproduce the discrete mapping used by PyVista.
+        normalized_index = int(
+            (value - clim_min)
+            / (clim_max - clim_min)
+            * n_colors
+        )
+
+        index = max(
+            0,
+            min(n_colors - 1, normalized_index),
+        )
+
+        return to_hex(cmap(index))
+
+    return [
+        {
+            "label": label,
+            "values": list(values),
+            "colors": [
+                color_for_value(value)
+                for value in values
+            ],
+        }
+        for label, values in groups
+    ]
 
 def plot_config_continuous():
     plot_config = {

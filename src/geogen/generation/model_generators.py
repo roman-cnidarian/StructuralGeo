@@ -313,7 +313,7 @@ class MarkovMatrixParser:
 class BlockedGeostoryGenerator(_GeostoryGenerator):
     """
     A class that generates geological models from a sequence of fixed-sequence steps and Markov-process steps called blocks. Each block is a combination of GeoWords, Events or GeoProcesses.
-    It is designed to exploit configurability built into GeoWord, GeoProcess and Event specifications in the second version of the geogen library.
+    It is designed to exploit configurability present in GeoWord, GeoProcess and Event specifications in the geogen library.
 
     Inherits from:
     --------------
@@ -367,7 +367,7 @@ class BlockedGeostoryGenerator(_GeostoryGenerator):
 
     def _instantiate(self, component_config):
         """
-        method to instantiate components based on the information stored in the block configuration tool
+        method to instantiate components listed in the geohistory of the block configuration
         """
         definition = self.registry.get(
             component_config.component
@@ -457,7 +457,7 @@ class BlockedGeostoryGenerator(_GeostoryGenerator):
         history = []
 
         for block in self.config.blocks:
-            if block.mode == "fixed":
+            if block.mode in {"fixed", "init"}:
                 block_history = self._generate_fixed_block(block)
             else:
                 block_history = self._generate_markov_block(block)

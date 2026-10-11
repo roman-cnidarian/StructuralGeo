@@ -488,6 +488,43 @@ class Sedimentation(Deposition):
     def last_value(self):
         return self.value_list[-1]
 
+class InitialSedimentation(CompoundProcess):
+    """Configurable sedimentation with base bedrock layer."""
+
+    def __init__(
+        self,
+        value_list,
+        thickness_list,
+        base,
+        bedrock_val = 0,
+    ):
+        values = list(value_list)
+        thicknesses = list(thickness_list)
+
+        if not values:
+            raise ValueError("value_list cannot be empty")
+
+        if len(values) != len(thicknesses):
+            raise ValueError(
+                "value_list and thickness_list must have equal lengths"
+            )
+
+        if any(thickness <= 0 for thickness in thicknesses):
+            raise ValueError(
+                "Every sediment thickness must be positive"
+            )
+        
+        super().__init__(
+            processes=[
+                Bedrock(base=base,value=bedrock_val,),
+                Sedimentation(
+                    value_list=values,
+                    thickness_list=thicknesses,
+                    base=base,
+                    )
+            ],
+            name="Initial sedimentation"
+        )
 
 class DikePlane(Deposition):
     """
