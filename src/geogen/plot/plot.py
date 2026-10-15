@@ -8,6 +8,9 @@ import numpy as np
 import pyvista as pv
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_hex
+import math
+from matplotlib.colors import BoundaryNorm
+from matplotlib.figure import Figure
 
 from geogen.model import GeoModel
 from geogen.generation import (
@@ -75,7 +78,7 @@ def plot_config_categorical(geowords=True):
 
     return plot_config
 
-def categorical_legend_entries() -> list[dict]:
+def categorical_legend_entries(threshold=None) -> list[dict]:
     """Return grouped labels and colors used by categorical plots."""
 
     config = plot_config_categorical(geowords=True)
@@ -108,17 +111,30 @@ def categorical_legend_entries() -> list[dict]:
 
         return to_hex(cmap(index))
 
-    return [
-        {
-            "label": label,
-            "values": list(values),
-            "colors": [
-                color_for_value(value)
-                for value in values
-            ],
-        }
-        for label, values in groups
-    ]
+    entries = []
+
+    for label, group_values in groups:
+        visible_values = [
+            value
+            for value in group_values
+            if threshold is None or value >= threshold
+        ]
+
+        if not visible_values:
+            continue
+
+        entries.append(
+            {
+                "label": label,
+                "values": list(visible_values),
+                "colors": [
+                    color_for_value(value)
+                    for value in visible_values
+                ],
+            }
+        )
+
+    return entries
 
 def plot_config_continuous():
     plot_config = {
@@ -196,6 +212,7 @@ def volview(
     show_bounds=False,
     clim=None,
     geowords=True,
+    opacity=1.0,
 ) -> pv.Plotter:
     """
     Visualize a volumetric view of the geological model with an optional bounding box.
@@ -226,7 +243,7 @@ def volview(
         plot_config["clim"] = clim
 
     plotter.add_mesh(
-        mesh, scalars="values", **plot_config, interpolate_before_map=False
+        mesh, scalars="values", opacity=opacity, **plot_config, interpolate_before_map=False
     )
     plotter.add_axes(line_width=5)
 
@@ -697,3 +714,273 @@ def panel_nsliceview(
     plotter.add_axes(line_width=5)
 
     return plotter
+
+
+# add slice plotter for app
+
+def npanel_nsliceview(
+        model: GeoModel,
+        n: int = 5,
+        axis: str = "x",
+        threshold: float = -0.5,
+    ) -> Figure:
+        """Render model sections as a grid of true 2D images."""
+
+        axis = axis.lower()
+
+        if axis not in {"x", "y", "z"}:
+            raise ValueError("axis must be 'x', 'y', or 'z'")
+
+        if n < 1:
+            raise ValueError("n must be at least 1")
+
+        axis_index = {"x": 0, "y": 1, "z": 2}[axis]
+        axis_resolution = model.resolution[axis_index]
+
+        # Avoid showing duplicate slices when n exceeds the resolution.
+        slice_count = min(n, axis_resolution)
+
+        slice_indices = np.rint(
+            np.linspace(
+                0,
+                axis_resolution - 1,
+                slice_count,
+            )
+        ).astype(int)
+
+        axis_coordinates = np.linspace(
+            model.bounds[axis_index][0],
+            model.bounds[axis_index][1],
+            axis_resolution,
+        )
+
+        data = model.get_data_grid()
+
+        columns = math.ceil(math.sqrt(slice_count))
+        rows = math.ceil(slice_count / columns)
+
+        figure, subplot_axes = plt.subplots(
+            rows,
+            columns,
+            figsize=(4 * columns, 3.2 * rows),
+            squeeze=False,
+            constrained_layout=True,
+        )
+
+        plot_config = plot_config_categorical()
+        cmap = plot_config["cmap"].copy()
+        cmap.set_bad("#ffffff")
+
+        clim_min, clim_max = plot_config["clim"]
+        boundaries = np.linspace(
+            clim_min,
+            clim_max,
+            plot_config["n_colors"] + 1,
+        )
+
+        norm = BoundaryNorm(
+            boundaries,
+            cmap.N,
+        )
+
+        displayed_axes = {
+            "x": {
+                "horizontal": "Y",
+                "vertical": "Z",
+                "horizontal_bounds": model.bounds[1],
+                "vertical_bounds": model.bounds[2],
+            },
+            "y": {
+                "horizontal": "X",
+                "vertical": "Z",
+                "horizontal_bounds": model.bounds[0],
+                "vertical_bounds": model.bounds[2],
+            },
+            "z": {
+                "horizontal": "X",
+                "vertical": "Y",
+                "horizontal_bounds": model.bounds[0],
+                "vertical_bounds": model.bounds[1],
+            },
+        }
+
+        display = displayed_axes[axis]
+
+        extent = (
+            display["horizontal_bounds"][0],
+            display["horizontal_bounds"][1],
+            display["vertical_bounds"][0],
+            display["vertical_bounds"][1],
+        )
+
+        for plot_index, data_index in enumerate(slice_indices):
+            row, column = divmod(plot_index, columns)
+            subplot = subplot_axes[row, column]
+
+            # np.take removes the selected axis. Transposing places the
+            # desired horizontal coordinate along the image x-axis.
+            section = np.take(
+                data,
+                data_index,
+                axis=axis_index,
+            ).T
+
+            section = np.ma.masked_where(
+                ~np.isfinite(section) | (section < threshold),
+                section,
+            )
+
+            if section.count() == 0:
+                subplot.text(
+                    0.5,
+                    0.5,
+                    "No visible geology",
+                    horizontalalignment="center",
+                    verticalalignment="center",
+                    transform=subplot.transAxes,
+                )
+            else:
+                subplot.imshow(
+                    section,
+                    origin="lower",
+                    extent=extent,
+                    cmap=cmap,
+                    norm=norm,
+                    interpolation="nearest",
+                    aspect="equal",
+                )
+
+            position = axis_coordinates[data_index]
+
+            subplot.set_title(
+                (
+                    f"Slice {plot_index + 1}/{slice_count} — "
+                    f"{axis.upper()} = {position:.1f}"
+                ),
+                fontsize=10,
+            )
+
+            subplot.set_xlabel(display["horizontal"])
+            subplot.set_ylabel(display["vertical"])
+            subplot.grid(False)
+
+        # Hide unused subplot positions.
+        for plot_index in range(slice_count, rows * columns):
+            row, column = divmod(plot_index, columns)
+            subplot_axes[row, column].set_visible(False)
+
+        return figure
+
+# def npanel_nsliceview(
+#     model: GeoModel,
+#     n: int = 5,
+#     axis: str = "x",
+#     threshold: float = -0.5,
+# ) -> pv.Plotter:
+#     """Display multiple slices as separate 2D subplot views.
+
+#     This differs from ``panel_nsliceview``, which displays all slices
+#     together in one 3D renderer.
+
+#     The plotter is created inside this function because its subplot
+#     layout must be known during construction.
+#     """
+#     axis = axis.lower()
+
+#     if axis not in {"x", "y", "z"}:
+#         raise ValueError("axis must be 'x', 'y', or 'z'")
+
+#     if n < 1:
+#         raise ValueError("n must be at least 1")
+
+#     columns = math.ceil(math.sqrt(n))
+#     rows = math.ceil(n / columns)
+
+#     plotter = pv.Plotter(
+#         shape=(rows, columns),
+#         border=True,
+#         off_screen=True,
+#     )
+
+#     plotter, mesh, plot_config = setup_plot(
+#         model=model,
+#         plotter=plotter,
+#         threshold=threshold,
+#     )
+
+#     if mesh is None:
+#         return plotter
+
+#     # The Studio uses its own HTML legend.
+#     plot_config["show_scalar_bar"] = False
+
+#     axis_index = {"x": 0, "y": 1, "z": 2}[axis]
+#     minimum, maximum = model.bounds[axis_index]
+
+#     if n == 1:
+#         positions = np.array([(minimum + maximum) / 2])
+#     else:
+#         padding = 0.01 * (maximum - minimum)
+#         positions = np.linspace(
+#             minimum + padding,
+#             maximum - padding,
+#             n,
+#         )
+
+#     displayed_axes = {
+#         "x": ("Y", "Z"),
+#         "y": ("X", "Z"),
+#         "z": ("X", "Y"),
+#     }
+
+#     horizontal_axis, vertical_axis = displayed_axes[axis]
+
+#     for index, position in enumerate(positions):
+#         row, column = divmod(index, columns)
+#         plotter.subplot(row, column)
+
+#         origin = list(mesh.center)
+#         origin[axis_index] = float(position)
+
+#         slice_mesh = mesh.slice(
+#             normal=axis,
+#             origin=origin,
+#         )
+
+#         if slice_mesh.n_points > 0:
+#             plotter.add_mesh(
+#                 slice_mesh,
+#                 scalars="values",
+#                 interpolate_before_map=False,
+#                 **plot_config,
+#             )
+
+#         # Named positions create serializer-supported corner annotations.
+#         plotter.add_text(
+#             (
+#                 f"Slice {index + 1}/{n} — "
+#                 f"{axis.upper()} = {position:.1f}"
+#             ),
+#             position="upper_edge",
+#             font_size=10,
+#             name=f"slice_title_{index}",
+#         )
+
+#         plotter.add_text(
+#             f"Horizontal: {horizontal_axis}   Vertical: {vertical_axis}",
+#             position="lower_edge",
+#             font_size=8,
+#             name=f"slice_axes_{index}",
+#         )
+
+#         if axis == "x":
+#             plotter.view_yz()
+#         elif axis == "y":
+#             plotter.view_xz()
+#         else:
+#             plotter.view_xy()
+
+#         plotter.enable_parallel_projection()
+#         plotter.reset_camera()
+
+#     return plotter
