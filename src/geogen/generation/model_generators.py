@@ -326,7 +326,7 @@ class BlockedGeostoryGenerator(_GeostoryGenerator):
 
     Parameters
     ----------
-    registry : 
+    registry : collection of key-values connecting componenct labels to underlying geoprocesses, used during instantiation of the components
     model_bounds : tuple, optional
         The bounds of the model in the form ((xmin, xmax), (ymin, ymax), (zmin, zmax)), by default ((-3840, 3840), (-3840, 3840), (-1920, 1920))
     model_resolution : tuple, optional
