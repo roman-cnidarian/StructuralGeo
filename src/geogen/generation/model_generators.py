@@ -442,16 +442,18 @@ class BlockedGeostoryGenerator(_GeostoryGenerator):
             )
 
             if state == "End":
-                return history
+                break
+                #return history
 
             history.append(
                 self._instantiate(components[state])
             )
 
-        raise RuntimeError(
-            f"Markov block {block.name!r} did not reach End "
-            f"within {block.max_steps} steps"
-        )
+        return history
+        # raise RuntimeError(
+        #     f"Markov block {block.name!r} did not reach End "
+        #     f"within {block.max_steps} steps"
+        # )
 
     def generate_history(self):
         history = []
